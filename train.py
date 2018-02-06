@@ -7,6 +7,7 @@ from data.data_loader import CreateDataLoader
 from models.models import create_model
 import util.util as util
 from util.visualizer import Visualizer
+from util.visdom_visualizer import VisdomVisualizer
 import os
 import numpy as np
 import torch
@@ -37,12 +38,12 @@ print('#training images = %d' % dataset_size)
 
 model = create_model(opt)
 visualizer = Visualizer(opt)
+visdom_visualizer = VisdomVisualizer(opt)
 
 total_steps = (start_epoch-1) * dataset_size + epoch_iter
 for epoch in range(start_epoch, opt.niter + opt.niter_decay + 1):
     epoch_start_time = time.time()
-    if epoch != start_epoch:
-        epoch_iter = epoch_iter % dataset_size
+    if epoch != start_epoch: epoch_iter = epoch_iter % dataset_size
     for i, data in enumerate(dataset, start=epoch_iter):
         iter_start_time = time.time()
         total_steps += opt.batchSize
@@ -52,18 +53,17 @@ for epoch in range(start_epoch, opt.niter + opt.niter_decay + 1):
         save_fake = total_steps % opt.display_freq == 0
 
         ############## Forward Pass ######################
-        losses, generated = model(Variable(data['label']), Variable(data['inst']),
-            Variable(data['image']), Variable(data['feat']), infer=save_fake)
+        losses, generated = model(Variable(data['label']), Variable(data['inst']), Variable(data['image']), Variable(data['feat']), infer=save_fake)
 
         # sum per device losses
         losses = [ torch.mean(x) if not isinstance(x, int) else x for x in losses ]
-        loss_dict = dict(zip(model.module.loss_names, losses)); #print(loss_dict)
+        loss_dict = dict(zip(model.module.loss_names, losses))
 
         # calculate final loss scalar
         loss_D = (loss_dict['D_fake'] + loss_dict['D_real']) * 0.5 
         loss_G = loss_dict['G_GAN'] + loss_dict['G_GAN_Feat'] + loss_dict['G_VGG'] + \
-                 loss_dict['G_KL'] + loss_dict['E_KL_real'] + loss_dict['E_KL_fake'] + \
-                 loss_dict['G_cos2'] # + loss_dict['G_cos2'] + loss_dict['G_L1']
+                 loss_dict['G_KL_fake'] + loss_dict['E_KL_real'] + loss_dict['E_KL_fake'] + loss_dict['G_L1'] + \
+                 loss_dict['G_cos1'] + loss_dict['G_cos2'] + loss_dict['G_cos1_z'] + loss_dict['G_cos2_z']
 
         ############### Backward Pass ####################
         # update generator weights
@@ -83,15 +83,20 @@ for epoch in range(start_epoch, opt.niter + opt.niter_decay + 1):
         if total_steps % opt.print_freq == 0:
             errors = {k: v.data[0] if not isinstance(v, int) else v for k, v in loss_dict.items()}
             t = (time.time() - iter_start_time) / opt.batchSize
-            visualizer.print_current_errors(epoch, epoch_iter, errors, t)
-            visualizer.plot_current_errors(errors, total_steps)
+            # visualizer.print_current_errors(epoch, epoch_iter, errors, t)
+            # visualizer.plot_current_errors(errors, total_steps)
+            visdom_visualizer.print_current_errors(epoch, epoch_iter, errors, t)
+            visdom_visualizer.plot_current_errors(epoch, float(epoch_iter)/dataset_size, opt, errors)
 
         ### display output images
         if save_fake:
             visuals = OrderedDict([('input_label', util.tensor2label(data['label'][0], opt.label_nc)),
                                    ('synthesized_image', util.tensor2im(generated.data[0])),
                                    ('real_image', util.tensor2im(data['image'][0]))])
-            visualizer.display_current_results(visuals, epoch, total_steps)
+            # visualizer.display_current_results(visuals, epoch, total_steps)
+            
+            visdom_visualizer.display_current_results(visuals, epoch, save_fake)
+
 
         ### save latest model
         if total_steps % opt.save_latest_freq == 0:
@@ -101,9 +106,11 @@ for epoch in range(start_epoch, opt.niter + opt.niter_decay + 1):
 
     # end of epoch
     iter_end_time = time.time()
-    print('End of epoch %d / %d \t Time Taken: %d sec' %
-          (epoch, opt.niter + opt.niter_decay, time.time() - epoch_start_time))
-
+    for param_group in model.module.optimizer_G.param_groups: current_lr = param_group['lr']
+    print('End of epoch %d / %d \t Time Taken: %d sec \t LR: %f' \
+    % (epoch, opt.niter + opt.niter_decay, time.time() - epoch_start_time, current_lr))
+    # assert model.module.optimizer_D.param_groups['lr'] == model.module.optimizer_G.param_groups['lr']
+    
     ### save model for this epoch
     if epoch % opt.save_epoch_freq == 0:
         print('saving the model at the end of epoch %d, iters %d' % (epoch, total_steps))
@@ -112,9 +119,7 @@ for epoch in range(start_epoch, opt.niter + opt.niter_decay + 1):
         np.savetxt(iter_path, (epoch+1, 0), delimiter=',', fmt='%d')
 
     ### instead of only training the local enhancer, train the entire network after certain iterations
-    if (opt.niter_fix_global != 0) and (epoch == opt.niter_fix_global):
-        model.module.update_fixed_params()
+    if (opt.niter_fix_global != 0) and (epoch == opt.niter_fix_global): model.module.update_fixed_params()
 
     ### linearly decay learning rate after certain iterations
-    if epoch > opt.niter:
-        model.module.update_learning_rate()
+    if epoch > opt.niter: model.module.update_learning_rate()

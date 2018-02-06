@@ -8,10 +8,13 @@ class TrainOptions(BaseOptions):
         # for displays
         self.parser.add_argument('--display_freq', type=int, default=100, help='frequency of showing training results on screen')
         self.parser.add_argument('--print_freq', type=int, default=100, help='frequency of showing training results on console')
-        self.parser.add_argument('--save_latest_freq', type=int, default=1000, help='frequency of saving the latest results')
+        self.parser.add_argument('--save_latest_freq', type=int, default=10000, help='frequency of saving the latest results')
         self.parser.add_argument('--save_epoch_freq', type=int, default=10, help='frequency of saving checkpoints at the end of epochs')        
         self.parser.add_argument('--no_html', action='store_true', help='do not save intermediate training results to [opt.checkpoints_dir]/[opt.name]/web/')
         self.parser.add_argument('--debug', action='store_true', help='only do one epoch and displays at each iteration')
+        ## visdom:
+        self.parser.add_argument('--display_single_pane_ncols', type=int, default=0, help='if positive, display all images in a single visdom web panel with certain number of images per row.')
+
 
         # for training
         self.parser.add_argument('--continue_train', action='store_true', help='continue training: load the latest model')
@@ -35,9 +38,12 @@ class TrainOptions(BaseOptions):
         
         # for the generator:
         self.parser.add_argument('--lambda_L1', type=float, default=0, help='weight for the L1 loss')
-        self.parser.add_argument('--lambda_G_cos', type=float, default=1, help='weight for the L1 loss')
-        self.parser.add_argument('--lambda_G_KL_fake', type=float, default=1, help='weight for the KL loss')
-        self.parser.add_argument('--lambda_E_KL_real', type=float, default=1, help='weight for the KL_real loss')
-        self.parser.add_argument('--lambda_E_KL_fake', type=float, default=1, help='weight for the KL_fake loss')
+        self.parser.add_argument('--lambda_G_cos1', type=float, default=0, help='weight for the L1 loss')
+        self.parser.add_argument('--lambda_G_cos2', type=float, default=0, help='weight for the L1 loss')
+        self.parser.add_argument('--lambda_G_cos1_z', type=float, default=0, help='weight for the L1 loss')
+        self.parser.add_argument('--lambda_G_cos2_z', type=float, default=0, help='weight for the L1 loss')
+        self.parser.add_argument('--lambda_G_KL_fake', type=float, default=0, help='weight for the KL loss')
+        self.parser.add_argument('--lambda_E_KL_real', type=float, default=0, help='weight for the KL_real loss')
+        self.parser.add_argument('--lambda_E_KL_fake', type=float, default=0, help='weight for the KL_fake loss')
         
         self.isTrain = True

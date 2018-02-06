@@ -36,6 +36,10 @@ class BaseOptions():
         # for displays
         self.parser.add_argument('--display_winsize', type=int, default=512,  help='display window size')
         self.parser.add_argument('--tf_log', action='store_true', help='if specified, use tensorboard logging. Requires tensorflow installed')
+        
+        ## visdom
+        self.parser.add_argument('--display_id', type=int, default=1, help='window id of the web display')
+        self.parser.add_argument('--display_port', type=int, default=8097, help='visdom port of the web display')
 
         # for generator
         self.parser.add_argument('--netG', type=str, default='global', help='selects model to use for netG')
@@ -68,18 +72,15 @@ class BaseOptions():
         self.opt.gpu_ids = []
         for str_id in str_ids:
             id = int(str_id)
-            if id >= 0:
-                self.opt.gpu_ids.append(id)
+            if id >= 0: self.opt.gpu_ids.append(id)
         
         # set gpu ids
-        if len(self.opt.gpu_ids) > 0:
-            torch.cuda.set_device(self.opt.gpu_ids[0])
+        if len(self.opt.gpu_ids) > 0: torch.cuda.set_device(self.opt.gpu_ids[0])
 
         args = vars(self.opt)
 
         print('------------ Options -------------')
-        for k, v in sorted(args.items()):
-            print('%s: %s' % (str(k), str(v)))
+        for k, v in sorted(args.items()): print('%s: %s' % (str(k), str(v)))
         print('-------------- End ----------------')
 
         # save to the disk        
@@ -89,7 +90,6 @@ class BaseOptions():
             file_name = os.path.join(expr_dir, 'opt.txt')
             with open(file_name, 'wt') as opt_file:
                 opt_file.write('------------ Options -------------\n')
-                for k, v in sorted(args.items()):
-                    opt_file.write('%s: %s\n' % (str(k), str(v)))
+                for k, v in sorted(args.items()): opt_file.write('%s: %s\n' % (str(k), str(v)))
                 opt_file.write('-------------- End ----------------\n')
         return self.opt

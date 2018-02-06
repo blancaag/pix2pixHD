@@ -24,10 +24,8 @@ class Pix2PixHDModel(BaseModel):
         ##### define networks
         # Generator network
         netG_input_nc = input_nc
-        if not opt.no_instance:
-            netG_input_nc += 1
-        if self.use_features:
-            netG_input_nc += opt.feat_num
+        if not opt.no_instance: netG_input_nc += 1
+        if self.use_features: netG_input_nc += opt.feat_num
         self.netG = networks.define_G(netG_input_nc, opt.output_nc, opt.ngf, opt.netG,
                                       opt.n_downsample_global, opt.n_blocks_global, opt.n_local_enhancers,
                                       opt.n_blocks_local, opt.norm, gpu_ids=self.gpu_ids)
@@ -36,8 +34,7 @@ class Pix2PixHDModel(BaseModel):
         if self.isTrain:
             use_sigmoid = opt.no_lsgan
             netD_input_nc = input_nc + opt.output_nc
-            if not opt.no_instance:
-                netD_input_nc += 1
+            if not opt.no_instance: netD_input_nc += 1
             self.netD = networks.define_D(netD_input_nc, opt.ndf, opt.n_layers_D, opt.norm, use_sigmoid,
                                           opt.num_D, not opt.no_ganFeat_loss, gpu_ids=self.gpu_ids)
 
@@ -74,19 +71,28 @@ class Pix2PixHDModel(BaseModel):
            
             criterion = 'param'; KL = 'qp'
             if criterion == 'param':
-                print('Using parametric criterion KL_%s' % KL)
+                # print('Using parametric criterion KL_%s' % KL)
                 # KL_minimizer = losses.KLN01Loss(direction=opt.KL, minimize=True)
                 # KL_maximizer = losses.KLN01Loss(direction=opt.KL, minimize=False)
             
                 self.criterionKL_min = networks.KLN01Loss(direction=KL, minimize=True)
                 self.criterionKL_max = networks.KLN01Loss(direction=KL, minimize=False)
             
-            if not opt.no_vgg_loss:
-                self.criterionVGG = networks.VGGLoss(self.gpu_ids)
+            if not opt.no_vgg_loss: self.criterionVGG = networks.VGGLoss(self.gpu_ids)
 
             # Names so we can breakout loss
-            self.loss_names = ['G_cos1', 'G_cos2', 'E_KL_real', 'E_KL_fake', 'G_KL', 'G_L1', 'G_GAN', 'G_GAN_Feat', 'G_VGG', 'D_real', 'D_fake'] # added G_cos1, G_cos2, G_L1, G_KL, E_KL (E_KL_real, E_KL_fake)
-
+            self.loss_names = ['G_cos1_z', 'G_cos2_z', 'G_cos1', 'G_cos2', 
+                               'E_KL_real', 'E_KL_fake', 'G_KL_fake', 'G_L1', 
+                               'G_GAN', 'G_GAN_Feat', 'G_VGG', 'D_real', 'D_fake'] # added G_cos1, G_cos2, G_L1, G_KL, E_KL (E_KL_real, E_KL_fake)
+            
+            self.loss_weights = [opt.lambda_G_cos1_z, opt.lambda_G_cos2_z, opt.lambda_G_cos1, opt.lambda_G_cos2, 
+                                 opt.lambda_E_KL_real, opt.lambda_E_KL_fake, opt.lambda_G_KL_fake, opt.lambda_L1,
+                                 1.0, opt.lambda_feat, opt.lambda_feat, 0.5, 0.5 ]
+                                 
+            print('===================== LOSSES =====================')
+            [print ('%s: %.2f' %(i, j)) for i, j in zip(self.loss_names, self.loss_weights)]
+            print('==================================================')
+            
             # initialize optimizers
             # optimizer G
             if opt.niter_fix_global > 0:
@@ -156,14 +162,16 @@ class Pix2PixHDModel(BaseModel):
     def forward(self, label, inst, image, feat, infer=False):
         # Encode Inputs
         input_label, inst_map, real_image, feat_map = self.encode_input(label, inst, image, feat)
-
+        # print(input_label.shape, inst_map.shape, real_image.shape, feat_map.shape)
+        # torch.Size([1, 3, 256, 256]) torch.Size([1]) torch.Size([1, 3, 256, 256]) torch.Size([1])
+        
         # Fake Generation
-        if self.use_features:
-            if not self.opt.load_features:
+        if self.use_features: # def. false
+            if not self.opt.load_features: # def. false
                 feat_map = self.netE.forward(real_image, inst_map)
-            input_concat = torch.cat((input_label, feat_map), dim=1)
+            input_concat = torch.cat((input_label, feat_map), dim=1) 
         else:
-            input_concat = input_label
+            input_concat = input_label 
         # print(input_concat.shape)
         fake_image = self.netG.forward(input_concat)
         fake_image_detached = self.netG.forward(input_concat).detach()
@@ -187,13 +195,11 @@ class Pix2PixHDModel(BaseModel):
             D_weights = 1.0 / self.opt.num_D
             for i in range(self.opt.num_D):
                 for j in range(len(pred_fake[i])-1):
-                    loss_G_GAN_Feat += D_weights * feat_weights * \
-                        self.criterionFeat(pred_fake[i][j], pred_real[i][j].detach()) * self.opt.lambda_feat
+                    loss_G_GAN_Feat += D_weights * feat_weights * self.criterionFeat(pred_fake[i][j], pred_real[i][j].detach()) * self.opt.lambda_feat
 
         # VGG feature matching loss
         loss_G_VGG = 0
-        if not self.opt.no_vgg_loss:
-            loss_G_VGG = self.criterionVGG(fake_image, real_image) * self.opt.lambda_feat
+        if not self.opt.no_vgg_loss: loss_G_VGG = self.criterionVGG(fake_image, real_image) * self.opt.lambda_feat
 
         # adding L1
         # fake_image = self.netG.forward(input_concat)
@@ -207,11 +213,15 @@ class Pix2PixHDModel(BaseModel):
         loss_G_KL_fake = self.criterionKL_min(self.netGE(fake_image)) * self.opt.lambda_G_KL_fake;
 
         # adding Cosine loss
-        loss_G_cos1 = self.criterionCos1(fake_image, real_image) * self.opt.lambda_G_cos
-        loss_G_cos2 = self.criterionCos2(fake_image, real_image) * self.opt.lambda_G_cos           
+        loss_G_cos1 = self.criterionCos1(fake_image, real_image) * self.opt.lambda_G_cos1
+        loss_G_cos2 = self.criterionCos2(fake_image, real_image) * self.opt.lambda_G_cos2          
+        loss_G_cos1_z = self.criterionCos1(self.netGE(fake_image), self.netGE(real_image)) * self.opt.lambda_G_cos1_z
+        loss_G_cos2_z = self.criterionCos2(self.netGE(fake_image), self.netGE(real_image)) * self.opt.lambda_G_cos2_z   
 
         # Only return the fake_B image if necessary to save BW
-        return [[loss_G_cos1, loss_G_cos2, loss_E_KL_real, loss_E_KL_fake, loss_G_KL_fake, loss_G_L1, loss_G_GAN, loss_G_GAN_Feat, loss_G_VGG, loss_D_real, loss_D_fake], None if not infer else fake_image]
+        return [[loss_G_cos1_z, loss_G_cos2_z, loss_G_cos1, loss_G_cos2, 
+                 loss_E_KL_real, loss_E_KL_fake, loss_G_KL_fake, loss_G_L1, 
+                 loss_G_GAN, loss_G_GAN_Feat, loss_G_VGG, loss_D_real, loss_D_fake], None if not infer else fake_image]
 
     def inference(self, label, inst):
         # Encode Inputs
@@ -222,8 +232,7 @@ class Pix2PixHDModel(BaseModel):
             # sample clusters from precomputed features
             feat_map = self.sample_features(inst_map)
             input_concat = torch.cat((input_label, feat_map), dim=1)
-        else:
-            input_concat = input_label
+        else: input_concat = input_label
         fake_image = self.netG.forward(input_concat)
         return fake_image
 
@@ -240,10 +249,8 @@ class Pix2PixHDModel(BaseModel):
             if label in features_clustered:
                 feat = features_clustered[label]
                 cluster_idx = np.random.randint(0, feat.shape[0])
-
                 idx = (inst == i).nonzero()
-                for k in range(self.opt.feat_num):
-                    feat_map[idx[:,0], idx[:,1] + k, idx[:,2], idx[:,3]] = feat[cluster_idx, k]
+                for k in range(self.opt.feat_num): feat_map[idx[:,0], idx[:,1] + k, idx[:,2], idx[:,3]] = feat[cluster_idx, k]
         return feat_map
 
     def encode_features(self, image, inst):
@@ -254,8 +261,7 @@ class Pix2PixHDModel(BaseModel):
         feat_map = self.netE.forward(image, inst.cuda())
         inst_np = inst.cpu().numpy().astype(int)
         feature = {}
-        for i in range(self.opt.label_nc):
-            feature[i] = np.zeros((0, feat_num+1))
+        for i in range(self.opt.label_nc): feature[i] = np.zeros((0, feat_num+1))
         for i in np.unique(inst_np):
             label = i if i < 1000 else i//1000
             idx = (inst == i).nonzero()
@@ -281,8 +287,7 @@ class Pix2PixHDModel(BaseModel):
     def save(self, which_epoch):
         self.save_network(self.netG, 'G', which_epoch, self.gpu_ids)
         self.save_network(self.netD, 'D', which_epoch, self.gpu_ids)
-        if self.gen_features:
-            self.save_network(self.netE, 'E', which_epoch, self.gpu_ids)
+        if self.gen_features: self.save_network(self.netE, 'E', which_epoch, self.gpu_ids)
 
     def update_fixed_params(self):
         # after fixing the global generator for a number of iterations, also start finetuning it
@@ -294,10 +299,8 @@ class Pix2PixHDModel(BaseModel):
 
     def update_learning_rate(self):
         lrd = self.opt.lr / self.opt.niter_decay
-        lr = self.old_lr - lrd
-        for param_group in self.optimizer_D.param_groups:
-            param_group['lr'] = lr
-        for param_group in self.optimizer_G.param_groups:
-            param_group['lr'] = lr
+        lr = self.old_lr - lrd; print(lr, lrd)
+        for param_group in self.optimizer_D.param_groups: param_group['lr'] = lr
+        for param_group in self.optimizer_G.param_groups: param_group['lr'] = lr
         print('update learning rate: %f -> %f' % (self.old_lr, lr))
         self.old_lr = lr

@@ -21,24 +21,7 @@ def normalize(x, dim=0):
     '''
     Projects points to a sphere.
     '''
-    return x.div(x.norm(2, dim=dim).expand_as(x))
-    
-# def match(x, y, dist):
-#     '''
-#     Computes distance between corresponding points in `x` and `y`
-#     using distance `dist`.
-#     '''
-#     if dist == 'L2':
-#         return (x - y).pow(2).mean()
-#     elif dist == 'L1':
-#         return (x - y).abs().mean()
-#     elif dist == 'cos':
-#         x_n = normalize(x)
-#         y_n = normalize(y)
-#
-#         return 2 - (x_n).mul(y_n).mean()
-#     else:
-#         assert dist == 'none', 'wtf ?'
+    return x.div(x.norm(2, dim=dim).expand_as(x).clamp(min=1e-8))
 
 def cosine_similarity(x1, x2, dim=1, eps=1e-8):
     r"""Returns cosine similarity between x1 and x2, computed along dim.
@@ -85,16 +68,15 @@ def get_norm_layer(norm_type='instance'):
 def define_G(input_nc, output_nc, ngf, netG, n_downsample_global=3, n_blocks_global=9, n_local_enhancers=1,
              n_blocks_local=3, norm='instance', gpu_ids=[]):
     norm_layer = get_norm_layer(norm_type=norm)
-    if netG == 'global':
-        netG = GlobalGenerator(input_nc, output_nc, ngf, n_downsample_global, n_blocks_global, norm_layer)
-    elif netG == 'local':
-        netG = LocalEnhancer(input_nc, output_nc, ngf, n_downsample_global, n_blocks_global,
+    
+    if netG == 'global': netG = GlobalGenerator(input_nc, output_nc, ngf, n_downsample_global, n_blocks_global, norm_layer)
+    elif netG == 'local': netG = LocalEnhancer(input_nc, output_nc, ngf, n_downsample_global, n_blocks_global,
                                   n_local_enhancers, n_blocks_local, norm_layer)
-    elif netG == 'encoder':
-        netG = Encoder(input_nc, output_nc, ngf, n_downsample_global, norm_layer)
-    else:
-        raise('generator not implemented!')
+    elif netG == 'encoder': netG = Encoder(input_nc, output_nc, ngf, n_downsample_global, norm_layer)
+    else: raise('generator not implemented!')
+    
     print(netG)
+    
     if len(gpu_ids) > 0:
         assert(torch.cuda.is_available())
         netG.cuda(gpu_ids[0])
@@ -164,17 +146,22 @@ class KLN01Loss(torch.nn.Module):
             # mu_1 = 0; sigma_1 = 1
             t1 = (1 + samples_mean.pow(2)) / (2 * samples_var.pow(2))
             t2 = samples_var.log()
+            
+            # t1 = torch.from_numpy(np.array(t1, dtype='int32')).double()
+            # t2 = torch.from_numpy(np.array(t2, dtype='int32')).double()
+            
             KL = (t1 + t2 - 0.5).mean()
         else:
             # mu_2 = 0; sigma_2 = 1
             t1 = (samples_var.pow(2) + samples_mean.pow(2)) / 2
             t2 = -samples_var.log()
 
+            # t1 = torch.from_numpy(np.array(t1, dtype='int32')).double()
+            # t2 = torch.from_numpy(np.array(t2, dtype='int32')).double()
+
             KL = (t1 + t2 - 0.5).mean()
 
         if not self.minimize: KL *= -1
-        
-        # print(KL)
 
         return KL
 
@@ -327,11 +314,11 @@ class GlobalGenerator(nn.Module):
                          norm_layer(int(ngf * mult / 2)), activation]
         model_up += [nn.ReflectionPad2d(3), nn.Conv2d(ngf, output_nc, kernel_size=7, padding=0), nn.Tanh()]
         
-        self.model_up = nn.Sequential(*model_up)
-        self.model = self.model_up
+        self.model = nn.Sequential(*model_up)
+        # self.model = self.model_up
         
-        model_enc, model_dec = model_down, model_res + model_up
-        self.model_enc, self.model_dec = nn.Sequential(*model_enc), nn.Sequential(*model_dec)
+        # model_enc, model_dec = model_down, model_res + model_up
+        # self.model_enc, self.model_dec = nn.Sequential(*model_enc), nn.Sequential(*model_dec)
 
     def forward(self, input):
         txtmap_embedding = 0
@@ -341,7 +328,7 @@ class GlobalGenerator(nn.Module):
         # out_concat = torch.cat(out_down, texture_embedding); print(out_concat.data[0].shape)
         out_sum = out_down + txtmap_embedding; # print(out_sum.data.shape) # torch.Size([1, 1024, 16, 16])
         out_res = self.model_res(out_sum); # print(out_res.data.shape) # torch.Size([1, 1024, 16, 16])
-        out_up = self.model_up(out_res); # print(out_up.data.shape) # torch.Size([1, 3, 256, 256])
+        out_up = self.model(out_res); # print(out_up.data.shape) # torch.Size([1, 3, 256, 256])
         return out_up
 
 # Define a resnet block
@@ -423,8 +410,7 @@ class Encoder(nn.Module):
         return outputs_mean
 
 class MultiscaleDiscriminator(nn.Module):
-    def __init__(self, input_nc, ndf=64, n_layers=3, norm_layer=nn.BatchNorm2d,
-                 use_sigmoid=False, num_D=3, getIntermFeat=False):
+    def __init__(self, input_nc, ndf=64, n_layers=3, norm_layer=nn.BatchNorm2d, use_sigmoid=False, num_D=3, getIntermFeat=False):
         super(MultiscaleDiscriminator, self).__init__()
         self.num_D = num_D
         self.n_layers = n_layers
@@ -434,33 +420,27 @@ class MultiscaleDiscriminator(nn.Module):
             netD = NLayerDiscriminator(input_nc, ndf, n_layers, norm_layer, use_sigmoid, getIntermFeat)
             if getIntermFeat:
                 for j in range(n_layers+2):
-                    setattr(self, 'scale'+str(i)+'_layer'+str(j), getattr(netD, 'model'+str(j)))
-            else:
-                setattr(self, 'layer'+str(i), netD.model)
+                    setattr(self, 'scale' + str(i) + '_layer' + str(j), getattr(netD, 'model' + str(j)))
+            else: setattr(self, 'layer' + str(i), netD.model)
 
         self.downsample = nn.AvgPool2d(3, stride=2, padding=[1, 1], count_include_pad=False)
 
     def singleD_forward(self, model, input):
         if self.getIntermFeat:
             result = [input]
-            for i in range(len(model)):
-                result.append(model[i](result[-1]))
+            for i in range(len(model)): result.append(model[i](result[-1]))
             return result[1:]
-        else:
-            return [model(input)]
+        else: return [model(input)]
 
     def forward(self, input):
         num_D = self.num_D
         result = []
         input_downsampled = input
         for i in range(num_D):
-            if self.getIntermFeat:
-                model = [getattr(self, 'scale'+str(num_D-1-i)+'_layer'+str(j)) for j in range(self.n_layers+2)]
-            else:
-                model = getattr(self, 'layer'+str(num_D-1-i))
+            if self.getIntermFeat: model = [getattr(self, 'scale' + str(num_D - 1 - i) + '_layer' + str(j)) for j in range(self.n_layers + 2)]
+            else: model = getattr(self, 'layer' + str(num_D - 1 - i))
             result.append(self.singleD_forward(model, input_downsampled))
-            if i != (num_D-1):
-                input_downsampled = self.downsample(input_downsampled)
+            if i != (num_D - 1): input_downsampled = self.downsample(input_downsampled)
         return result
 
 # Defines the PatchGAN discriminator with the specified arguments.
@@ -478,31 +458,21 @@ class NLayerDiscriminator(nn.Module):
         for n in range(1, n_layers):
             nf_prev = nf
             nf = min(nf * 2, 512)
-            sequence += [[
-                nn.Conv2d(nf_prev, nf, kernel_size=kw, stride=2, padding=padw),
-                norm_layer(nf), nn.LeakyReLU(0.2, True)
-            ]]
+            sequence += [[nn.Conv2d(nf_prev, nf, kernel_size=kw, stride=2, padding=padw), norm_layer(nf), nn.LeakyReLU(0.2, True)]]
 
         nf_prev = nf
         nf = min(nf * 2, 512)
-        sequence += [[
-            nn.Conv2d(nf_prev, nf, kernel_size=kw, stride=1, padding=padw),
-            norm_layer(nf),
-            nn.LeakyReLU(0.2, True)
-        ]]
-
+        sequence += [[nn.Conv2d(nf_prev, nf, kernel_size=kw, stride=1, padding=padw), norm_layer(nf), nn.LeakyReLU(0.2, True)]]
         sequence += [[nn.Conv2d(nf, 1, kernel_size=kw, stride=1, padding=padw)]]
 
-        if use_sigmoid:
-            sequence += [[nn.Sigmoid()]]
+        if use_sigmoid: sequence += [[nn.Sigmoid()]]
 
         if getIntermFeat:
             for n in range(len(sequence)):
                 setattr(self, 'model'+str(n), nn.Sequential(*sequence[n]))
         else:
             sequence_stream = []
-            for n in range(len(sequence)):
-                sequence_stream += sequence[n]
+            for n in range(len(sequence)): sequence_stream += sequence[n]
             self.model = nn.Sequential(*sequence_stream)
 
     def forward(self, input):
@@ -512,8 +482,7 @@ class NLayerDiscriminator(nn.Module):
                 model = getattr(self, 'model'+str(n))
                 res.append(model(res[-1]))
             return res[1:]
-        else:
-            return self.model(input)
+        else: return self.model(input)
 
 from torchvision import models
 class Vgg19(torch.nn.Module):

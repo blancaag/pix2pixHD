@@ -41,10 +41,8 @@ class Visualizer():
             img_summaries = []
             for label, image_numpy in visuals.items():
                 # Write the image to a string
-                try:
-                    s = StringIO()
-                except:
-                    s = BytesIO()
+                try: s = StringIO()
+                except: s = BytesIO()
                 scipy.misc.toimage(image_numpy).save(s, format="jpeg")
                 # Create an Image object
                 img_sum = self.tf.Summary.Image(encoded_image_string=s.getvalue(), height=image_numpy.shape[0], width=image_numpy.shape[1])
@@ -104,12 +102,11 @@ class Visualizer():
     def print_current_errors(self, epoch, i, errors, t):
         message = '(epoch: %d, iters: %d, time: %.3f) ' % (epoch, i, t)
         for k, v in errors.items():
-            if v != 0:
-                message += '%s: %.3f ' % (k, v)
+            if v != 0: message += '%s: %.3f ' % (k, v)
+            # if v == 0: message += '%s (na): %.3f ' % (k, v)
 
         print(message)
-        with open(self.log_name, "a") as log_file:
-            log_file.write('%s\n' % message)
+        with open(self.log_name, "a") as log_file: log_file.write('%s\n' % message)
 
     # save image to the disk
     def save_images(self, webpage, visuals, image_path):
